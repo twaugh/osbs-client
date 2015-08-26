@@ -174,9 +174,11 @@ class TestBuildRequest(object):
         build_json = build_request.render()
 
         assert build_json["metadata"]["name"] == TEST_BUILD_CONFIG
-        assert "triggers" not in build_json["spec"]
+        assert "triggers" in build_json["spec"]
+        assert build_json["spec"]["triggers"][0]\
+            ["imageChange"]["from"]["name"] == 'fedora:latest'
         assert build_json["spec"]["source"]["git"]["uri"] == TEST_GIT_URI
-        assert build_json["spec"]["source"]["git"]["ref"] == TEST_GIT_REF
+        assert build_json["spec"]["source"]["git"]["ref"] == TEST_GIT_BRANCH
         assert build_json["spec"]["output"]["to"]["name"].startswith(
             "registry.example.com/john-foo/component:"
         )
@@ -191,10 +193,8 @@ class TestBuildRequest(object):
         assert plugins_json is not None
         plugins = json.loads(plugins_json)
 
-        with pytest.raises(NoSuchPluginException):
-            get_plugin(plugins, "prebuild_plugins", "check_and_set_rebuild")
-        with pytest.raises(NoSuchPluginException):
-            get_plugin(plugins, "prebuild_plugins", "bump_release")
+        assert get_plugin(plugins, "prebuild_plugins", "check_and_set_rebuild")
+        assert get_plugin(plugins, "prebuild_plugins", "bump_release")
         assert plugin_value_get(plugins, "prebuild_plugins", "distgit_fetch_artefacts",
                                 "args", "command") == "make"
         assert plugin_value_get(plugins, "prebuild_plugins", "pull_base_image",
@@ -207,8 +207,7 @@ class TestBuildRequest(object):
             get_plugin(plugins, "postbuild_plugins", "cp_built_image_to_nfs")
         with pytest.raises(NoSuchPluginException):
             get_plugin(plugins, "postbuild_plugins", "pulp_push")
-        with pytest.raises(NoSuchPluginException):
-            get_plugin(plugins, "postbuild_plugins", "import_image")
+        assert get_plugin(plugins, "postbuild_plugins", "import_image")
         assert 'sourceSecret' not in build_json["spec"]["source"]
         assert plugin_value_get(plugins, "prebuild_plugins", "add_yum_repo_by_url",
                                 "args", "repourls") == ["http://example.com/my.repo"]
@@ -225,6 +224,7 @@ class TestBuildRequest(object):
     def test_render_prod_request(self):
         bm = BuildManager(INPUTS_PATH)
         build_request = bm.get_build_request_by_type(PROD_BUILD_TYPE)
+        push_url = "ssh://{username}git.example.git/git/{component}.git"
         name_label = "fedora/resultingimage"
         kwargs = {
             'git_uri': TEST_GIT_URI,
@@ -244,14 +244,19 @@ class TestBuildRequest(object):
             'vendor': "Foo Vendor",
             'build_host': "our.build.host.example.com",
             'authoritative_registry': "registry.example.com",
+            'git_push_url': push_url.format(username='',
+                                            component=TEST_COMPONENT),
+            'git_push_username': 'example',
         }
         build_request.set_params(**kwargs)
         build_json = build_request.render()
 
         assert build_json["metadata"]["name"] == TEST_BUILD_CONFIG
-        assert "triggers" not in build_json["spec"]
+        assert "triggers" in build_json["spec"]
+        assert build_json["spec"]["triggers"][0]\
+            ["imageChange"]["from"]["name"] == 'fedora:latest'
         assert build_json["spec"]["source"]["git"]["uri"] == TEST_GIT_URI
-        assert build_json["spec"]["source"]["git"]["ref"] == TEST_GIT_REF
+        assert build_json["spec"]["source"]["git"]["ref"] == TEST_GIT_BRANCH
         assert build_json["spec"]["output"]["to"]["name"].startswith(
             "registry.example.com/john-foo/component:"
         )
@@ -266,10 +271,18 @@ class TestBuildRequest(object):
         assert plugins_json is not None
         plugins = json.loads(plugins_json)
 
-        with pytest.raises(NoSuchPluginException):
-            get_plugin(plugins, "prebuild_plugins", "check_and_set_rebuild")
-        with pytest.raises(NoSuchPluginException):
-            get_plugin(plugins, "prebuild_plugins", "bump_release")
+        assert get_plugin(plugins, "prebuild_plugins", "check_and_set_rebuild")
+        assert plugin_value_get(plugins, "prebuild_plugins",
+                                "check_and_set_rebuild", "args",
+                                "url") == kwargs["openshift_uri"]
+        assert get_plugin(plugins, "prebuild_plugins", "bump_release")
+        assert plugin_value_get(plugins, "prebuild_plugins", "bump_release",
+                                "args", "git_ref") == TEST_GIT_REF
+        assert plugin_value_get(plugins, "prebuild_plugins",
+                                "bump_release", "args",
+                                "push_url") == push_url.format(username='example@',
+                                                               component=TEST_COMPONENT)
+
         assert plugin_value_get(plugins, "prebuild_plugins", "distgit_fetch_artefacts",
                                 "args", "command") == "make"
         assert plugin_value_get(plugins, "prebuild_plugins", "pull_base_image", "args",
@@ -286,8 +299,16 @@ class TestBuildRequest(object):
             get_plugin(plugins, "postbuild_plugins", "cp_built_image_to_nfs")
         with pytest.raises(NoSuchPluginException):
             get_plugin(plugins, "postbuild_plugins", "pulp_push")
-        with pytest.raises(NoSuchPluginException):
-            get_plugin(plugins, "postbuild_plugins", "import_image")
+
+        assert get_plugin(plugins, "postbuild_plugins", "import_image")
+        assert plugin_value_get(plugins, "postbuild_plugins", "import_image",
+                                "args", "imagestream") == name_label.replace('/', '-')
+        expected_repo = os.path.join(kwargs["registry_uri"], name_label)
+        assert plugin_value_get(plugins, "postbuild_plugins", "import_image",
+                                "args", "docker_image_repo") == expected_repo
+        assert plugin_value_get(plugins, "postbuild_plugins", "import_image",
+                                "args", "url") == kwargs["openshift_uri"]
+
         assert 'sourceSecret' not in build_json["spec"]["source"]
 
         labels = plugin_value_get(plugins, "prebuild_plugins", "add_labels_in_dockerfile",
@@ -324,9 +345,11 @@ class TestBuildRequest(object):
         build_json = build_request.render()
 
         assert build_json["metadata"]["name"] == TEST_BUILD_CONFIG
-        assert "triggers" not in build_json["spec"]
+        assert "triggers" in build_json["spec"]
+        assert build_json["spec"]["triggers"][0]\
+            ["imageChange"]["from"]["name"] == 'fedora:latest'
         assert build_json["spec"]["source"]["git"]["uri"] == TEST_GIT_URI
-        assert build_json["spec"]["source"]["git"]["ref"] == TEST_GIT_REF
+        assert build_json["spec"]["source"]["git"]["ref"] == TEST_GIT_BRANCH
         assert build_json["spec"]["output"]["to"]["name"].startswith(
             "registry.example.com/john-foo/component:"
         )
@@ -341,10 +364,8 @@ class TestBuildRequest(object):
         assert plugins_json is not None
         plugins = json.loads(plugins_json)
 
-        with pytest.raises(NoSuchPluginException):
-            get_plugin(plugins, "prebuild_plugins", "check_and_set_rebuild")
-        with pytest.raises(NoSuchPluginException):
-            get_plugin(plugins, "prebuild_plugins", "bump_release")
+        assert get_plugin(plugins, "prebuild_plugins", "check_and_set_rebuild")
+        assert get_plugin(plugins, "prebuild_plugins", "bump_release")
         assert plugin_value_get(plugins, "prebuild_plugins", "distgit_fetch_artefacts",
                                 "args", "command") == "make"
         assert plugin_value_get(plugins, "prebuild_plugins", "pull_base_image", "args",
@@ -358,8 +379,7 @@ class TestBuildRequest(object):
             get_plugin(plugins, "postbuild_plugins", "cp_built_image_to_nfs")
         with pytest.raises(NoSuchPluginException):
             get_plugin(plugins, "postbuild_plugins", "pulp_push")
-        with pytest.raises(NoSuchPluginException):
-            get_plugin(plugins, "postbuild_plugins", "import_image")
+        assert get_plugin(plugins, "postbuild_plugins", "import_image")
         assert 'sourceSecret' not in build_json["spec"]["source"]
 
         labels = plugin_value_get(plugins, "prebuild_plugins", "add_labels_in_dockerfile",
@@ -400,6 +420,10 @@ class TestBuildRequest(object):
         build_request.set_params(**kwargs)
         build_json = build_request.render()
 
+        assert "triggers" in build_json["spec"]
+        assert build_json["spec"]["triggers"][0]\
+            ["imageChange"]["from"]["name"] == 'fedora:latest'
+
         assert build_json["spec"]["source"]["sourceSecret"]["name"] == "mysecret"
 
         strategy = build_json['spec']['strategy']['customStrategy']['env']
@@ -412,15 +436,12 @@ class TestBuildRequest(object):
         assert plugins_json is not None
         plugins = json.loads(plugins_json)
 
-        with pytest.raises(NoSuchPluginException):
-            get_plugin(plugins, "prebuild_plugins", "check_and_set_rebuild")
-        with pytest.raises(NoSuchPluginException):
-            get_plugin(plugins, "prebuild_plugins", "bump_release")
+        assert get_plugin(plugins, "prebuild_plugins", "check_and_set_rebuild")
+        assert get_plugin(plugins, "prebuild_plugins", "bump_release")
         assert get_plugin(plugins, "prebuild_plugins", "koji")
         assert get_plugin(plugins, "postbuild_plugins", "pulp_push")
         assert get_plugin(plugins, "postbuild_plugins", "cp_built_image_to_nfs")
-        with pytest.raises(NoSuchPluginException):
-            get_plugin(plugins, "postbuild_plugins", "import_image")
+        assert get_plugin(plugins, "postbuild_plugins", "import_image")
 
     def test_render_with_yum_repourls(self):
         bm = BuildManager(INPUTS_PATH)
@@ -454,6 +475,11 @@ class TestBuildRequest(object):
         kwargs['yum_repourls'] = ['http://example.com/repo1.repo', 'http://example.com/repo2.repo']
         build_request.set_params(**kwargs)
         build_json = build_request.render()
+
+        assert "triggers" in build_json["spec"]
+        assert build_json["spec"]["triggers"][0]\
+            ["imageChange"]["from"]["name"] == 'fedora:latest'
+
         strategy = build_json['spec']['strategy']['customStrategy']['env']
         plugins_json = None
         for d in strategy:
@@ -474,18 +500,15 @@ class TestBuildRequest(object):
         assert 'http://example.com/repo1.repo' in repourls
         assert 'http://example.com/repo2.repo' in repourls
 
-        with pytest.raises(NoSuchPluginException):
-            get_plugin(plugins, "prebuild_plugins", "check_and_set_rebuild")
-        with pytest.raises(NoSuchPluginException):
-            get_plugin(plugins, "prebuild_plugins", "bump_release")
+        assert get_plugin(plugins, "prebuild_plugins", "check_and_set_rebuild")
+        assert get_plugin(plugins, "prebuild_plugins", "bump_release")
         with pytest.raises(NoSuchPluginException):
             get_plugin(plugins, "prebuild_plugins", "koji")
         with pytest.raises(NoSuchPluginException):
             get_plugin(plugins, "postbuild_plugins", "cp_built_image_to_nfs")
         with pytest.raises(NoSuchPluginException):
             get_plugin(plugins, "postbuild_plugins", "pulp_push")
-        with pytest.raises(NoSuchPluginException):
-            get_plugin(plugins, "postbuild_plugins", "import_image")
+        assert get_plugin(plugins, "postbuild_plugins", "import_image")
 
     def test_render_prod_with_pulp_no_auth(self):
         """
@@ -514,7 +537,7 @@ class TestBuildRequest(object):
         with pytest.raises(OsbsValidationException):
             build_request.render()
 
-    def test_render_prod_request_with_trigger(self, tmpdir):
+    def test_render_prod_request_without_trigger(self, tmpdir):
         # Make temporary copies of the JSON files
         for basename in ['prod.json', 'prod_inner.json']:
             shutil.copy(os.path.join(INPUTS_PATH, basename),
@@ -524,19 +547,8 @@ class TestBuildRequest(object):
         with open(os.path.join(str(tmpdir), 'prod.json'), 'r+') as prod_json:
             build_json = json.load(prod_json)
 
-            # Add the image change trigger
-            build_json['spec']['triggers'] = [
-                {
-                    "type": "ImageChange",
-                    "imageChange": {
-                        "from": {
-                            "kind": "ImageStreamTag",
-                            "name": "{{BASE_IMAGE_STREAM}}"
-                        }
-                    }
-                }
-            ]
-
+            # Remove the image change trigger
+            del build_json['spec']['triggers']
             prod_json.seek(0)
             json.dump(build_json, prod_json)
             prod_json.truncate()
@@ -544,11 +556,10 @@ class TestBuildRequest(object):
         bm = BuildManager(str(tmpdir))
         build_request = bm.get_build_request_by_type(PROD_BUILD_TYPE)
         name_label = "fedora/resultingimage"
-        push_url = "ssh://{username}git.example.com/git/{component}.git"
         kwargs = {
             'git_uri': TEST_GIT_URI,
             'git_ref': TEST_GIT_REF,
-            'git_branch': TEST_GIT_REF,
+            'git_branch': TEST_GIT_BRANCH,
             'user': "john-foo",
             'component': TEST_COMPONENT,
             'base_image': 'fedora:latest',
@@ -560,14 +571,13 @@ class TestBuildRequest(object):
             'vendor': "Foo Vendor",
             'build_host': "our.build.host.example.com",
             'authoritative_registry': "registry.example.com",
-            'git_push_url': push_url.format(username='', component=TEST_COMPONENT),
-            'git_push_username': 'example',
         }
         build_request.set_params(**kwargs)
         build_json = build_request.render()
 
-        assert "triggers" in build_json["spec"]
-        assert build_json["spec"]["triggers"][0]["imageChange"]["from"]["name"] == 'fedora:latest'
+        assert "triggers" not in build_json["spec"]
+        assert build_json["spec"]["source"]["git"]["uri"] == TEST_GIT_URI
+        assert build_json["spec"]["source"]["git"]["ref"] == TEST_GIT_REF
 
         strategy = build_json['spec']['strategy']['customStrategy']['env']
         plugins_json = None
@@ -577,27 +587,12 @@ class TestBuildRequest(object):
                 break
 
         plugins = json.loads(plugins_json)
-        assert get_plugin(plugins, "prebuild_plugins", "check_and_set_rebuild")
-        assert plugin_value_get(plugins, "prebuild_plugins",
-                                "check_and_set_rebuild", "args",
-                                "url") == kwargs["openshift_uri"]
-        assert get_plugin(plugins, "prebuild_plugins", "bump_release")
-        assert plugin_value_get(plugins, "prebuild_plugins", "bump_release", "args",
-                                "git_ref") == TEST_GIT_REF
-        assert plugin_value_get(plugins, "prebuild_plugins", "bump_release", "args",
-                                "push_url") == push_url.format(username='example@',
-                                                               component=TEST_COMPONENT)
-        assert get_plugin(plugins, "postbuild_plugins", "import_image")
-        assert plugin_value_get(plugins,
-                                "postbuild_plugins", "import_image", "args",
-                                "imagestream") == name_label.replace('/', '-')
-        expected_repo = os.path.join(kwargs["registry_uri"], name_label)
-        assert plugin_value_get(plugins,
-                                "postbuild_plugins", "import_image", "args",
-                                "docker_image_repo") == expected_repo
-        assert plugin_value_get(plugins,
-                                "postbuild_plugins", "import_image", "args",
-                                "url") == kwargs["openshift_uri"]
+        with pytest.raises(NoSuchPluginException):
+            get_plugin(plugins, "prebuild_plugins", "check_and_set_rebuild")
+        with pytest.raises(NoSuchPluginException):
+            get_plugin(plugins, "prebuild_plugins", "bump_release")
+        with pytest.raises(NoSuchPluginException):
+            get_plugin(plugins, "postbuild_plugins", "import_image")
 
     def test_render_prod_request_new_secrets(self, tmpdir):
         bm = BuildManager(INPUTS_PATH)
