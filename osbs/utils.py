@@ -14,8 +14,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from time import strptime
-from calendar import timegm
+from datetime import datetime
+
+try:
+    # py3
+    import dateutil.parser
+except ImportError:
+    # py2 workaround in get_time_from_rfc3339() below
+    from time import strptime
+    from calendar import timegm
 
 from dockerfile_parse import DockerfileParser
 from osbs.exceptions import OsbsException
@@ -127,10 +134,15 @@ def get_time_from_rfc3339(rfc3339):
     """
 
     try:
-        # Decode the RFC 3339 date with no fractional seconds
-        # (the format Origin provides)
-        time_tuple = strptime(rfc3339, '%Y-%m-%dT%H:%M:%SZ')
-    except ValueError:
-        raise RuntimeError("Time format not understood: %s" % rfc3339)
+        # py 3
+        
+        dt = dateutil.parser.parse(rfc3339, ignoretz=False)
+        return dt.timestamp()
+    except NameError:
+        # py 2
 
-    return timegm(time_tuple)
+        # Decode the RFC 3339 date with no fractional seconds (the
+        # format Origin provides). Note that this will fail to parse
+        # valid ISO8601 timestamps not in this exact format.
+        time_tuple = strptime(rfc3339, '%Y-%m-%dT%H:%M:%SZ')
+        return timegm(time_tuple)
