@@ -70,8 +70,9 @@ def test_get_time_from_rfc3339_valid(rfc3339, seconds, tz):
     'EST',
 ])
 @pytest.mark.parametrize(('rfc3339', 'seconds'), [
-    # This test only works in Python 3
+    # These tests only work in Python 3
     ('2015-08-24T10:41:00.1Z', 1440412860.1),
+    ('2015-09-22T11:12:00+01:00', 1442916720),
 ])
 def test_get_time_from_rfc3339_valid_alt_format(rfc3339, seconds, tz):
     os.environ['TZ'] = tz

@@ -18,6 +18,9 @@ from datetime import datetime
 
 try:
     # py3
+    if not hasattr(datetime.now(), 'timestamp'):
+        raise ImportError
+
     import dateutil.parser
 except ImportError:
     # py2 workaround in get_time_from_rfc3339() below
